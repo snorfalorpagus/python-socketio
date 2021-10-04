@@ -321,7 +321,7 @@ class Client(object):
         else:
             self._retry_connect(wait, wait_timeout, is_reconnect=False)
 
-    def _connect(self, wait=True, wait_timeout=1):
+    def _connect(self, wait, wait_timeout):
         self.namespaces = {}
         if self._connect_event is None:
             self._connect_event = self.eio.create_event()
@@ -376,7 +376,7 @@ class Client(object):
                     break
                 current_delay *= 2
             try:
-                self._connect()
+                self._connect(wait, wait_timeout)
             except (exceptions.ConnectionError, ValueError) as err:
                 pass
             else:
