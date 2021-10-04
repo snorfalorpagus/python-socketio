@@ -365,7 +365,6 @@ class Client(object):
         attempt_count = 0
         current_delay = self.reconnection_delay
         while True:
-            self.logger.info("current_delay %i", current_delay)
             if attempt_count > 0 or is_reconnect:
                 delay = min(current_delay, self.reconnection_delay_max)
                 delay += self.randomization_factor * (2 * random.random() - 1)
