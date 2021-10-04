@@ -251,7 +251,7 @@ class Client(object):
 
     def connect(self, url, headers={}, auth=None, transports=None,
                 namespaces=None, socketio_path='socket.io', wait=True,
-                wait_timeout=1):
+                wait_timeout=1, fail_fast=True):
         """Connect to a Socket.IO server.
 
         :param url: The URL of the Socket.IO server. It can include custom
@@ -287,6 +287,10 @@ class Client(object):
                              connection. The default is 1 second. This
                              argument is only considered when ``wait`` is set
                              to ``True``.
+        :param fail_fast: If set to ``True`` (the default) the client will
+                          raise an exception immediately if the connection
+                          attempt fails. If set to ``False`` the connection
+                          will be retried the same as for a disconnect.
 
         Example usage::
 
@@ -311,6 +315,13 @@ class Client(object):
         elif isinstance(namespaces, str):
             namespaces = [namespaces]
         self.connection_namespaces = namespaces
+
+        if fail_fast or not self.reconnection:
+            self._connect(wait, wait_timeout)
+        else:
+            self._retry_connect(wait, wait_timeout, is_reconnect=False)
+
+    def _connect(self, wait=True, wait_timeout=1):
         self.namespaces = {}
         if self._connect_event is None:
             self._connect_event = self.eio.create_event()
@@ -320,8 +331,8 @@ class Client(object):
         real_headers = self._get_real_value(self.connection_headers)
         try:
             self.eio.connect(real_url, headers=real_headers,
-                             transports=transports,
-                             engineio_path=socketio_path)
+                             transports=self.connection_transports,
+                             engineio_path=self.socketio_path)
         except engineio.exceptions.ConnectionError as exc:
             self._trigger_event(
                 'connect_error', '/',
@@ -339,6 +350,47 @@ class Client(object):
                     'One or more namespaces failed to connect')
 
         self.connected = True
+
+    def _retry_connect(self, wait=1, wait_timeout=False, is_reconnect=False):
+        """Retry attempts to connect with an exponential backoff
+        
+        :param is_reconnect: If this is a reconnection attempt the first delay
+                             will happen before the first attempt, otherwise
+                             the first attempt is made immediately.
+        """
+        if self._reconnect_abort is None:  # pragma: no cover
+            self._reconnect_abort = self.eio.create_event()
+        self._reconnect_abort.clear()
+        reconnecting_clients.append(self)
+        attempt_count = 0
+        current_delay = self.reconnection_delay
+        while True:
+            self.logger.info("current_delay %i", current_delay)
+            if attempt_count > 0 or is_reconnect:
+                delay = min(current_delay, self.reconnection_delay_max)
+                delay += self.randomization_factor * (2 * random.random() - 1)
+                self.logger.info(
+                    'Connection failed, new attempt in {:.02f} seconds'.format(
+                        delay))
+                if self._reconnect_abort.wait(delay):
+                    break
+                current_delay *= 2
+            try:
+                self._connect()
+            except (exceptions.ConnectionError, ValueError) as err:
+                pass
+            else:
+                self._reconnect_task = None
+                break
+            attempt_count += 1
+            if self.reconnection_attempts and \
+                    attempt_count >= self.reconnection_attempts:
+                self.logger.info(
+                    'Maximum reconnection attempts reached, giving up')
+                if not is_reconnect:
+                    raise err
+                break
+        reconnecting_clients.remove(self)
 
     def wait(self):
         """Wait until the connection with the server ends.
@@ -621,44 +673,7 @@ class Client(object):
                 event, *args)
 
     def _handle_reconnect(self):
-        if self._reconnect_abort is None:  # pragma: no cover
-            self._reconnect_abort = self.eio.create_event()
-        self._reconnect_abort.clear()
-        reconnecting_clients.append(self)
-        attempt_count = 0
-        current_delay = self.reconnection_delay
-        while True:
-            delay = current_delay
-            current_delay *= 2
-            if delay > self.reconnection_delay_max:
-                delay = self.reconnection_delay_max
-            delay += self.randomization_factor * (2 * random.random() - 1)
-            self.logger.info(
-                'Connection failed, new attempt in {:.02f} seconds'.format(
-                    delay))
-            if self._reconnect_abort.wait(delay):
-                self.logger.info('Reconnect task aborted')
-                break
-            attempt_count += 1
-            try:
-                self.connect(self.connection_url,
-                             headers=self.connection_headers,
-                             auth=self.connection_auth,
-                             transports=self.connection_transports,
-                             namespaces=self.connection_namespaces,
-                             socketio_path=self.socketio_path)
-            except (exceptions.ConnectionError, ValueError):
-                pass
-            else:
-                self.logger.info('Reconnection successful')
-                self._reconnect_task = None
-                break
-            if self.reconnection_attempts and \
-                    attempt_count >= self.reconnection_attempts:
-                self.logger.info(
-                    'Maximum reconnection attempts reached, giving up')
-                break
-        reconnecting_clients.remove(self)
+        self._retry_connect(is_reconnect=True)
 
     def _handle_eio_connect(self):
         """Handle the Engine.IO connection event."""
