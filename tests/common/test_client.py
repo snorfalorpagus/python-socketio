@@ -291,6 +291,23 @@ class TestClient(unittest.TestCase):
                 wait=False,
             )
 
+    def test_connect_error_reconnect(self):
+        c = client.Client()
+        c.eio.connect = mock.MagicMock(
+            side_effect=[engineio_exceptions.ConnectionError('foo'), None]
+        )
+        c.on('foo', mock.MagicMock(), namespace='/foo')
+        c.on('bar', mock.MagicMock(), namespace='/')
+        c.connect(
+            'url',
+            headers='headers',
+            transports='transports',
+            socketio_path='path',
+            wait=False,
+            fail_fast=False,
+        )
+        assert c.eio.connect.call_count == 2
+
     def test_connect_twice(self):
         c = client.Client()
         c.eio.connect = mock.MagicMock()
