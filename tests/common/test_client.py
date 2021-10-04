@@ -296,8 +296,6 @@ class TestClient(unittest.TestCase):
         c.eio.connect = mock.MagicMock(
             side_effect=[engineio_exceptions.ConnectionError('foo'), None]
         )
-        c.on('foo', mock.MagicMock(), namespace='/foo')
-        c.on('bar', mock.MagicMock(), namespace='/')
         c.connect(
             'url',
             headers='headers',
