@@ -251,7 +251,7 @@ class Client(object):
 
     def connect(self, url, headers={}, auth=None, transports=None,
                 namespaces=None, socketio_path='socket.io', wait=True,
-                wait_timeout=1):
+                wait_timeout=1, fail_fast=True):
         """Connect to a Socket.IO server.
 
         :param url: The URL of the Socket.IO server. It can include custom
@@ -287,6 +287,10 @@ class Client(object):
                              connection. The default is 1 second. This
                              argument is only considered when ``wait`` is set
                              to ``True``.
+        :fail_fast: If set to ``True`` (the default) if the initial connection
+                    fails an exception is raised. If set to ``False`` the
+                    call returns without error and the reconnection process is
+                    started in the background.
 
         Example usage::
 
@@ -326,7 +330,11 @@ class Client(object):
             self._trigger_event(
                 'connect_error', '/',
                 exc.args[1] if len(exc.args) > 1 else exc.args[0])
-            raise exceptions.ConnectionError(exc.args[0]) from None
+            if fail_fast:
+                raise exceptions.ConnectionError(exc.args[0]) from None
+            else:
+                self._reconnect_task = self.start_background_task(self._handle_reconnect)
+                return
 
         if wait:
             while self._connect_event.wait(timeout=wait_timeout):

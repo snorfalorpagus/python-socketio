@@ -1047,6 +1047,25 @@ class TestClient(unittest.TestCase):
         ]
         assert c._reconnect_task == 'foo'
 
+    def test_initial_reconnect(self):
+        c = client.Client()
+
+        times_called = 0
+        def mock_connect(*args, **kwargs):
+            nonlocal times_called
+            times_called += 1
+            if times_called < 3:
+                raise engineio_exceptions.ConnectionError('error')
+            else:
+                c._handle_connect('/', {})
+            return
+
+        c.eio.connect = mock.MagicMock(side_effect=mock_connect)
+        c._reconnect_abort = c.eio.create_event()
+        c._reconnect_abort.wait = mock.MagicMock(side_effect=[False, True])
+        c.connect('https://example.com', fail_fast=False)
+        c.wait()
+
     def test_handle_eio_connect(self):
         c = client.Client()
         c.connection_namespaces = ['/', '/foo']
